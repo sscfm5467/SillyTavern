@@ -5,19 +5,20 @@ import path from 'node:path';
 import mime from 'mime-types';
 import express from 'express';
 import sanitize from 'sanitize-filename';
-import jimp from 'jimp';
+import { Jimp, JimpMime } from '../jimp.js';
 import { sync as writeFileAtomicSync } from 'write-file-atomic';
 
-import { getAllUserHandles, getUserDirectories } from '../users.js';
 import { getConfigValue } from '../util.js';
-import { jsonParser } from '../express-common.js';
 
-const thumbnailsEnabled = !!getConfigValue('thumbnails.enabled', true);
-const quality = Math.min(100, Math.max(1, parseInt(getConfigValue('thumbnails.quality', 95))));
+const thumbnailsEnabled = !!getConfigValue('thumbnails.enabled', true, 'boolean');
+const quality = Math.min(100, Math.max(1, parseInt(getConfigValue('thumbnails.quality', 95, 'number'))));
 const pngFormat = String(getConfigValue('thumbnails.format', 'jpg')).toLowerCase().trim() === 'png';
 
 /** @type {Record<string, number[]>} */
-const dimensions = getConfigValue('thumbnails.dimensions', { 'bg': [160, 90], 'avatar': [96, 144] });
+const dimensions = {
+    'bg': getConfigValue('thumbnails.dimensions.bg', [160, 90]),
+    'avatar': getConfigValue('thumbnails.dimensions.avatar', [96, 144]),
+};
 
 /**
  * Gets a path to thumbnail folder based on the type.
@@ -89,7 +90,6 @@ async function generateThumbnail(directories, type, file) {
     let thumbnailFolder = getThumbnailFolder(directories, type);
     let originalFolder = getOriginalFolder(directories, type);
     if (thumbnailFolder === undefined || originalFolder === undefined) throw new Error('Invalid thumbnail type');
-
     const pathToCachedFile = path.join(thumbnailFolder, file);
     const pathToOriginalFile = path.join(originalFolder, file);
 
@@ -104,7 +104,7 @@ async function generateThumbnail(directories, type, file) {
         const cachedStat = fs.statSync(pathToCachedFile);
 
         if (originalStat.mtimeMs > cachedStat.ctimeMs) {
-            //console.log('Original file changed. Regenerating thumbnail...');
+            //console.warn('Original file changed. Regenerating thumbnail...');
             shouldRegenerate = true;
         }
     }
@@ -122,14 +122,16 @@ async function generateThumbnail(directories, type, file) {
 
         try {
             const size = dimensions[type];
-            const image = await jimp.read(pathToOriginalFile);
-            const imgType = type == 'avatar' && pngFormat ? 'image/png' : 'image/jpeg';
+            const image = await Jimp.read(pathToOriginalFile);
             const width = !isNaN(size?.[0]) && size?.[0] > 0 ? size[0] : image.bitmap.width;
             const height = !isNaN(size?.[1]) && size?.[1] > 0 ? size[1] : image.bitmap.height;
-            buffer = await image.cover(width, height).quality(quality).getBufferAsync(imgType);
+            image.cover({ w: width, h: height });
+            buffer = pngFormat
+                ? await image.getBuffer(JimpMime.png)
+                : await image.getBuffer(JimpMime.jpeg, { quality: quality, jpegColorSpace: 'ycbcr' });
         }
         catch (inner) {
-            console.warn(`Thumbnailer can not process the image: ${pathToOriginalFile}. Using original size`);
+            console.warn(`Thumbnailer can not process the image: ${pathToOriginalFile}. Using original size`, inner);
             buffer = fs.readFileSync(pathToOriginalFile);
         }
 
@@ -144,20 +146,19 @@ async function generateThumbnail(directories, type, file) {
 
 /**
  * Ensures that the thumbnail cache for backgrounds is valid.
+ * @param {import('../users.js').UserDirectoryList[]} directoriesList User directories
  * @returns {Promise<void>} Promise that resolves when the cache is validated
  */
-export async function ensureThumbnailCache() {
-    const userHandles = await getAllUserHandles();
-    for (const handle of userHandles) {
-        const directories = getUserDirectories(handle);
+export async function ensureThumbnailCache(directoriesList) {
+    for (const directories of directoriesList) {
         const cacheFiles = fs.readdirSync(directories.thumbnailsBg);
 
         // files exist, all ok
         if (cacheFiles.length) {
-            return;
+            continue;
         }
 
-        console.log('Generating thumbnails cache. Please wait...');
+        console.info('Generating thumbnails cache. Please wait...');
 
         const bgFiles = fs.readdirSync(directories.backgrounds);
         const tasks = [];
@@ -167,14 +168,14 @@ export async function ensureThumbnailCache() {
         }
 
         await Promise.all(tasks);
-        console.log(`Done! Generated: ${bgFiles.length} preview images`);
+        console.info(`Done! Generated: ${bgFiles.length} preview images`);
     }
 }
 
 export const router = express.Router();
 
 // Important: This route must be mounted as '/thumbnail'. It is used in the client code and saved to chat files.
-router.get('/', jsonParser, async function (request, response) {
+router.get('/', async function (request, response) {
     try{
         if (typeof request.query.file !== 'string' || typeof request.query.type !== 'string') {
             return response.sendStatus(400);

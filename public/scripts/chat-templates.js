@@ -47,6 +47,10 @@ const hash_derivations = {
         // gemma-2-2b-it
         'Gemma 2'
     ,
+    '7de1c58e208eda46e9c7f86397df37ec49883aeece39fb961e0a6b24088dd3c4':
+        // gemma-3
+        'Gemma 2'
+    ,
 
     // Cohere
     '3b54f5c219ae1caa5c0bb2cdc7c001863ca6807cf888e4240e8739fa7eb9e02e':
@@ -59,6 +63,17 @@ const hash_derivations = {
         // Tulu-3-8B
         // Tulu-3-70B
         'Tulu'
+    ,
+
+    // DeepSeek V2.5
+    '54d400beedcd17f464e10063e0577f6f798fa896266a912d8a366f8a2fcc0bca':
+        'DeepSeek-V2.5'
+    ,
+
+    // DeepSeek R1
+    'b6835114b7303ddd78919a82e4d9f7d8c26ed0d7dfc36beeb12d524f6144eab1':
+        'DeepSeek-V2.5'
+    ,
 };
 
 const substr_derivations = {
@@ -87,6 +102,6 @@ export async function deriveTemplatesFromChatTemplate(chat_template, hash) {
         }
     }
 
-    console.log(`Unknown chat template hash: ${hash} for [${chat_template}]`);
+    console.warn(`Unknown chat template hash: ${hash} for [${chat_template}]`);
     return null;
 }

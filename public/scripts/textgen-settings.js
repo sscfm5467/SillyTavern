@@ -10,6 +10,7 @@ import {
     setOnlineStatus,
     substituteParams,
 } from '../script.js';
+import { t } from './i18n.js';
 import { BIAS_CACHE, createNewLogitBiasEntry, displayLogitBias, getLogitBiasListResult } from './logit-bias.js';
 
 import { power_user, registerDebugFunction } from './power-user.js';
@@ -85,7 +86,7 @@ const OOBA_DEFAULT_ORDER = [
     'encoder_repetition_penalty',
     'no_repeat_ngram',
 ];
-const APHRODITE_DEFAULT_ORDER = [
+export const APHRODITE_DEFAULT_ORDER = [
     'dry',
     'penalties',
     'no_repeat_ngram',
@@ -107,12 +108,12 @@ const BIAS_KEY = '#textgenerationwebui_api-settings';
 // (7 days later) The future has come.
 const MANCER_SERVER_KEY = 'mancer_server';
 const MANCER_SERVER_DEFAULT = 'https://neuro.mancer.tech';
-let MANCER_SERVER = localStorage.getItem(MANCER_SERVER_KEY) ?? MANCER_SERVER_DEFAULT;
-let TOGETHERAI_SERVER = 'https://api.together.xyz';
-let INFERMATICAI_SERVER = 'https://api.totalgpt.ai';
-let DREAMGEN_SERVER = 'https://dreamgen.com';
-let OPENROUTER_SERVER = 'https://openrouter.ai/api';
-let FEATHERLESS_SERVER = 'https://api.featherless.ai/v1';
+export let MANCER_SERVER = localStorage.getItem(MANCER_SERVER_KEY) ?? MANCER_SERVER_DEFAULT;
+export let TOGETHERAI_SERVER = 'https://api.together.xyz';
+export let INFERMATICAI_SERVER = 'https://api.totalgpt.ai';
+export let DREAMGEN_SERVER = 'https://dreamgen.com';
+export let OPENROUTER_SERVER = 'https://openrouter.ai/api';
+export let FEATHERLESS_SERVER = 'https://api.featherless.ai/v1';
 
 export const SERVER_INPUTS = {
     [textgen_types.OOBA]: '#textgenerationwebui_api_url_text',
@@ -172,6 +173,7 @@ const settings = {
     //truncation_length: 2048,
     ban_eos_token: false,
     skip_special_tokens: true,
+    include_reasoning: true,
     streaming: false,
     mirostat_mode: 0,
     mirostat_tau: 5,
@@ -181,6 +183,8 @@ const settings = {
     grammar_string: '',
     json_schema: {},
     banned_tokens: '',
+    global_banned_tokens: '',
+    send_banned_tokens: true,
     sampler_priority: OOBA_DEFAULT_ORDER,
     samplers: LLAMACPP_DEFAULT_ORDER,
     samplers_priorities: APHRODITE_DEFAULT_ORDER,
@@ -263,6 +267,7 @@ export const setting_names = [
     'add_bos_token',
     'ban_eos_token',
     'skip_special_tokens',
+    'include_reasoning',
     'streaming',
     'mirostat_mode',
     'mirostat_tau',
@@ -272,6 +277,8 @@ export const setting_names = [
     'grammar_string',
     'json_schema',
     'banned_tokens',
+    'global_banned_tokens',
+    'send_banned_tokens',
     'ignore_eos_token',
     'spaces_between_special_tokens',
     'speculative_ngram',
@@ -304,15 +311,21 @@ export function validateTextGenUrl() {
     const formattedUrl = formatTextGenURL(url);
 
     if (!formattedUrl) {
-        toastr.error('Enter a valid API URL', 'Text Completion API');
+        toastr.error(t`Enter a valid API URL`, 'Text Completion API');
         return;
     }
 
     control.val(formattedUrl);
 }
 
-export function getTextGenServer() {
-    switch (settings.type) {
+/**
+ * Gets the API URL for the selected text generation type.
+ * @param {string} type If it's set, ignores active type
+ * @returns {string} API URL
+ */
+export function getTextGenServer(type = null) {
+    const selectedType = type ?? settings.type;
+    switch (selectedType) {
         case FEATHERLESS:
             return FEATHERLESS_SERVER;
         case MANCER:
@@ -326,7 +339,7 @@ export function getTextGenServer() {
         case OPENROUTER:
             return OPENROUTER_SERVER;
         default:
-            return settings.server_urls[settings.type] ?? '';
+            return settings.server_urls[selectedType] ?? '';
     }
 }
 
@@ -392,7 +405,7 @@ function getTokenizerForTokenIds() {
  * @returns {TokenBanResult} String with comma-separated banned token IDs
  */
 function getCustomTokenBans() {
-    if (!settings.banned_tokens && !textgenerationwebui_banned_in_macros.length) {
+    if (!settings.send_banned_tokens || (!settings.banned_tokens && !settings.global_banned_tokens && !textgenerationwebui_banned_in_macros.length)) {
         return {
             banned_tokens: '',
             banned_strings: [],
@@ -402,8 +415,9 @@ function getCustomTokenBans() {
     const tokenizer = getTokenizerForTokenIds();
     const banned_tokens = [];
     const banned_strings = [];
-    const sequences = settings.banned_tokens
-        .split('\n')
+    const sequences = []
+        .concat(settings.banned_tokens.split('\n'))
+        .concat(settings.global_banned_tokens.split('\n'))
         .concat(textgenerationwebui_banned_in_macros)
         .filter(x => x.length > 0)
         .filter(onlyUnique);
@@ -448,6 +462,18 @@ function getCustomTokenBans() {
         banned_tokens: banned_tokens.filter(onlyUnique).map(x => String(x)).join(','),
         banned_strings: banned_strings,
     };
+}
+
+/**
+ * Sets the banned strings kill switch toggle.
+ * @param {boolean} isEnabled Kill switch state
+ * @param {string} title Label title
+ */
+function toggleBannedStringsKillSwitch(isEnabled, title) {
+    $('#send_banned_tokens_textgenerationwebui').prop('checked', isEnabled);
+    $('#send_banned_tokens_label').find('.menu_button').toggleClass('toggleEnabled', isEnabled).prop('title', title);
+    settings.send_banned_tokens = isEnabled;
+    saveSettingsDebounced();
 }
 
 /**
@@ -501,7 +527,7 @@ export function loadTextGenSettings(data, loadedSettings) {
     for (const [type, selector] of Object.entries(SERVER_INPUTS)) {
         const control = $(selector);
         control.val(settings.server_urls[type] ?? '').on('input', function () {
-            settings.server_urls[type] = String($(this).val());
+            settings.server_urls[type] = String($(this).val()).trim();
             saveSettingsDebounced();
         });
     }
@@ -592,6 +618,14 @@ function sortAphroditeItemsByOrder(orderArray) {
 }
 
 jQuery(function () {
+    $('#send_banned_tokens_textgenerationwebui').on('change', function () {
+        const checked = !!$(this).prop('checked');
+        toggleBannedStringsKillSwitch(checked,
+            checked
+                ? t`Banned tokens/strings are being sent in the request.`
+                : t`Banned tokens/strings are NOT being sent in the request.`);
+    });
+
     $('#koboldcpp_order').sortable({
         delay: getSortableDelay(),
         stop: function () {
@@ -740,6 +774,7 @@ jQuery(function () {
             'add_bos_token_textgenerationwebui': true,
             'temperature_last_textgenerationwebui': true,
             'skip_special_tokens_textgenerationwebui': true,
+            'include_reasoning_textgenerationwebui': true,
             'top_a_textgenerationwebui': 0,
             'top_a_counter_textgenerationwebui': 0,
             'mirostat_mode_textgenerationwebui': 0,
@@ -768,16 +803,18 @@ jQuery(function () {
             'dry_penalty_last_n_textgenerationwebui': 0,
             'xtc_threshold_textgenerationwebui': 0.1,
             'xtc_probability_textgenerationwebui': 0,
+            'nsigma_textgenerationwebui': 0,
         };
 
         for (const [id, value] of Object.entries(inputs)) {
             const inputElement = $(`#${id}`);
+            const valueToSet = typeof value === 'boolean' ? String(value) : value;
             if (inputElement.prop('type') === 'checkbox') {
                 inputElement.prop('checked', value).trigger('input');
             } else if (inputElement.prop('type') === 'number') {
-                inputElement.val(value).trigger('input');
+                inputElement.val(valueToSet).trigger('input');
             } else {
-                inputElement.val(value).trigger('input');
+                inputElement.val(valueToSet).trigger('input');
                 if (power_user.enableZenSliders) {
                     let masterElementID = inputElement.prop('id');
                     console.log(masterElementID);
@@ -929,6 +966,10 @@ function setSettingByName(setting, value, trigger) {
     if (isCheckbox) {
         const val = Boolean(value);
         $(`#${setting}_textgenerationwebui`).prop('checked', val);
+
+        if ('send_banned_tokens' === setting) {
+            $(`#${setting}_textgenerationwebui`).trigger('change');
+        }
     }
     else if (isText) {
         $(`#${setting}_textgenerationwebui`).val(value);
@@ -986,6 +1027,7 @@ export async function generateTextGenWithStreaming(generate_data, signal) {
         let logprobs = null;
         const swipes = [];
         const toolCalls = [];
+        const state = { reasoning: '' };
         while (true) {
             const { done, value } = await reader.read();
             if (done) return;
@@ -1002,9 +1044,10 @@ export async function generateTextGenWithStreaming(generate_data, signal) {
                 const newText = data?.choices?.[0]?.text || data?.content || '';
                 text += newText;
                 logprobs = parseTextgenLogprobs(newText, data.choices?.[0]?.logprobs || data?.completion_probabilities);
+                state.reasoning += data?.choices?.[0]?.reasoning ?? '';
             }
 
-            yield { text, swipes, logprobs, toolCalls };
+            yield { text, swipes, logprobs, toolCalls, state };
         }
     };
 }
@@ -1152,7 +1195,7 @@ export function getTextGenModel() {
             return settings.aphrodite_model;
         case OLLAMA:
             if (!settings.ollama_model) {
-                toastr.error('No Ollama model selected.', 'Text Completion API');
+                toastr.error(t`No Ollama model selected.`, 'Text Completion API');
                 throw new Error('No Ollama model selected');
             }
             return settings.ollama_model;
@@ -1180,8 +1223,14 @@ function isDynamicTemperatureSupported() {
     return settings.dynatemp && DYNATEMP_BLOCK?.dataset?.tgType?.includes(settings.type);
 }
 
-function getLogprobsNumber() {
-    if (settings.type === VLLM || settings.type === INFERMATICAI) {
+/**
+ * Gets the number of logprobs to request based on the selected type.
+ * @param {string} type If it's set, ignores active type
+ * @returns {number} Number of logprobs to request
+ */
+export function getLogprobsNumber(type = null) {
+    const selectedType = type ?? settings.type;
+    if (selectedType === VLLM || selectedType === INFERMATICAI) {
         return 5;
     }
 
@@ -1193,7 +1242,7 @@ function getLogprobsNumber() {
  * @param {string} str Input string
  * @returns {string} Output string
  */
-function replaceMacrosInList(str) {
+export function replaceMacrosInList(str) {
     if (!str || typeof str !== 'string') {
         return str;
     }
@@ -1216,7 +1265,7 @@ function replaceMacrosInList(str) {
     }
 }
 
-export function getTextGenGenerationData(finalPrompt, maxTokens, isImpersonate, isContinue, cfgValues, type) {
+export async function getTextGenGenerationData(finalPrompt, maxTokens, isImpersonate, isContinue, cfgValues, type) {
     const canMultiSwipe = !isContinue && !isImpersonate && type !== 'quiet';
     const dynatemp = isDynamicTemperatureSupported();
     const { banned_tokens, banned_strings } = getCustomTokenBans();
@@ -1231,7 +1280,7 @@ export function getTextGenGenerationData(finalPrompt, maxTokens, isImpersonate, 
         'top_p': settings.top_p,
         'typical_p': settings.typical_p,
         'typical': settings.typical_p,
-        'sampler_seed': settings.seed,
+        'sampler_seed': settings.seed >= 0 ? settings.seed : undefined,
         'min_p': settings.min_p,
         'repetition_penalty': settings.rep_pen,
         'frequency_penalty': settings.freq_pen,
@@ -1265,6 +1314,7 @@ export function getTextGenGenerationData(finalPrompt, maxTokens, isImpersonate, 
         'truncation_length': max_context,
         'ban_eos_token': settings.ban_eos_token,
         'skip_special_tokens': settings.skip_special_tokens,
+        'include_reasoning': settings.include_reasoning,
         'top_a': settings.top_a,
         'tfs': settings.tfs,
         'epsilon_cutoff': [OOBA, MANCER].includes(settings.type) ? settings.epsilon_cutoff : undefined,
@@ -1294,7 +1344,7 @@ export function getTextGenGenerationData(finalPrompt, maxTokens, isImpersonate, 
         'temperature_last': (settings.type === OOBA || settings.type === APHRODITE || settings.type == TABBY) ? settings.temperature_last : undefined,
         'speculative_ngram': settings.type === TABBY ? settings.speculative_ngram : undefined,
         'do_sample': settings.type === OOBA ? settings.do_sample : undefined,
-        'seed': settings.seed,
+        'seed': settings.seed >= 0 ? settings.seed : undefined,
         'guidance_scale': cfgValues?.guidanceScale?.value ?? settings.guidance_scale ?? 1,
         'negative_prompt': cfgValues?.negativePrompt ?? substituteParams(settings.negative_prompt) ?? '',
         'grammar_string': settings.grammar_string,
@@ -1443,7 +1493,7 @@ export function getTextGenGenerationData(finalPrompt, maxTokens, isImpersonate, 
         }
     }
 
-    eventSource.emitAndWait(event_types.TEXT_COMPLETION_SETTINGS_READY, params);
+    await eventSource.emit(event_types.TEXT_COMPLETION_SETTINGS_READY, params);
 
     // Grammar conflicts with with json_schema
     if (settings.type === LLAMACPP) {

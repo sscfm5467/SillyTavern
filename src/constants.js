@@ -43,6 +43,7 @@ export const USER_DIRECTORY_TEMPLATE = Object.freeze({
     vectors: 'vectors',
     backups: 'backups',
     sysprompt: 'sysprompt',
+    reasoning: 'reasoning',
 });
 
 /**
@@ -139,19 +140,19 @@ export const UNSAFE_EXTENSIONS = [
 export const GEMINI_SAFETY = [
     {
         category: 'HARM_CATEGORY_HARASSMENT',
-        threshold: 'BLOCK_NONE',
+        threshold: 'OFF',
     },
     {
         category: 'HARM_CATEGORY_HATE_SPEECH',
-        threshold: 'BLOCK_NONE',
+        threshold: 'OFF',
     },
     {
         category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT',
-        threshold: 'BLOCK_NONE',
+        threshold: 'OFF',
     },
     {
         category: 'HARM_CATEGORY_DANGEROUS_CONTENT',
-        threshold: 'BLOCK_NONE',
+        threshold: 'OFF',
     },
     {
         category: 'HARM_CATEGORY_CIVIC_INTEGRITY',
@@ -173,9 +174,9 @@ export const CHAT_COMPLETION_SOURCES = {
     PERPLEXITY: 'perplexity',
     GROQ: 'groq',
     ZEROONEAI: '01ai',
-    BLOCKENTROPY: 'blockentropy',
     NANOGPT: 'nanogpt',
     DEEPSEEK: 'deepseek',
+    XAI: 'xai',
 };
 
 /**
@@ -267,23 +268,6 @@ export const FEATHERLESS_KEYS = [
     'guided_whitespace_pattern',
 ];
 
-// https://dreamgen.com/docs/api#openai-text
-export const DREAMGEN_KEYS = [
-    'model',
-    'prompt',
-    'max_tokens',
-    'temperature',
-    'top_p',
-    'top_k',
-    'min_p',
-    'repetition_penalty',
-    'frequency_penalty',
-    'presence_penalty',
-    'stop',
-    'stream',
-    'minimum_message_content_tokens',
-];
-
 // https://docs.together.ai/reference/completions
 export const TOGETHERAI_KEYS = [
     'model',
@@ -304,6 +288,7 @@ export const TOGETHERAI_KEYS = [
 export const OLLAMA_KEYS = [
     'num_predict',
     'num_ctx',
+    'num_batch',
     'stop',
     'temperature',
     'repeat_penalty',
@@ -369,6 +354,7 @@ export const OPENROUTER_KEYS = [
     'prompt',
     'stop',
     'provider',
+    'include_reasoning',
 ];
 
 // https://github.com/vllm-project/vllm/blob/0f8a91401c89ac0a8018def3756829611b57727f/vllm/entrypoints/openai/protocol.py#L220
@@ -413,3 +399,10 @@ export const VLLM_KEYS = [
     'guided_decoding_backend',
     'guided_whitespace_pattern',
 ];
+
+export const LOG_LEVELS = {
+    DEBUG: 0,
+    INFO: 1,
+    WARN: 2,
+    ERROR: 3,
+};

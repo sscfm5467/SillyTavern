@@ -3,14 +3,13 @@ import { getSortableDelay } from '../../../../utils.js';
 import { log, warn } from '../../index.js';
 import { QuickReply } from '../QuickReply.js';
 import { QuickReplySet } from '../QuickReplySet.js';
-// eslint-disable-next-line no-unused-vars
 import { QuickReplySettings } from '../QuickReplySettings.js';
 
 export class SettingsUi {
-    /**@type {QuickReplySettings}*/ settings;
+    /** @type {QuickReplySettings} */ settings;
 
-    /**@type {HTMLElement}*/ template;
-    /**@type {HTMLElement}*/ dom;
+    /** @type {HTMLElement} */ template;
+    /** @type {HTMLElement} */ dom;
 
     /**@type {HTMLInputElement}*/ isEnabled;
     /**@type {HTMLInputElement}*/ isCombined;
@@ -346,7 +345,7 @@ export class SettingsUi {
     }
 
     async addQrSet() {
-        const name = await Popup.show.input('Create a new World Info', 'Enter a name for the new Quick Reply Set:');
+        const name = await Popup.show.input('Create a new Quick Reply Set', 'Enter a name for the new Quick Reply Set:');
         if (name && name.length > 0) {
             const oldQrs = QuickReplySet.get(name);
             if (oldQrs) {

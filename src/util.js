@@ -5,19 +5,31 @@ import process from 'node:process';
 import { Readable } from 'node:stream';
 import { createRequire } from 'node:module';
 import { Buffer } from 'node:buffer';
+import { promises as dnsPromise } from 'node:dns';
+import os from 'node:os';
 
 import yaml from 'yaml';
 import { sync as commandExistsSync } from 'command-exists';
-import { sync as writeFileAtomicSync } from 'write-file-atomic';
 import _ from 'lodash';
 import yauzl from 'yauzl';
 import mime from 'mime-types';
 import { default as simpleGit } from 'simple-git';
+import chalk from 'chalk';
+import { LOG_LEVELS } from './constants.js';
+import bytes from 'bytes';
 
 /**
  * Parsed config object.
  */
 let CACHED_CONFIG = null;
+
+/**
+ * Converts a configuration key to an environment variable key.
+ * @param {string} key Configuration key
+ * @returns {string} Environment variable key
+ * @example keyToEnv('extensions.models.speechToText') // 'SILLYTAVERN_EXTENSIONS_MODELS_SPEECHTOTEXT'
+ */
+export const keyToEnv = (key) => 'SILLYTAVERN_' + String(key).toUpperCase().replace(/\./g, '_');
 
 /**
  * Returns the config object from the config.yaml file.
@@ -49,24 +61,40 @@ export function getConfig() {
  * Returns the value for the given key from the config object.
  * @param {string} key - Key to get from the config object
  * @param {any} defaultValue - Default value to return if the key is not found
+ * @param {'number'|'boolean'|null} typeConverter - Type to convert the value to
  * @returns {any} Value for the given key
  */
-export function getConfigValue(key, defaultValue = null) {
-    const config = getConfig();
-    return _.get(config, key, defaultValue);
+export function getConfigValue(key, defaultValue = null, typeConverter = null) {
+    function _getValue() {
+        const envKey = keyToEnv(key);
+        if (envKey in process.env) {
+            const needsJsonParse = defaultValue && typeof defaultValue === 'object';
+            const envValue = process.env[envKey];
+            return needsJsonParse ? (tryParse(envValue) ?? defaultValue) : envValue;
+        }
+        const config = getConfig();
+        return _.get(config, key, defaultValue);
+    }
+
+    const value = _getValue();
+    switch (typeConverter) {
+        case 'number':
+            return isNaN(parseFloat(value)) ? defaultValue : parseFloat(value);
+        case 'boolean':
+            return toBoolean(value);
+        default:
+            return value;
+    }
 }
 
 /**
- * Sets a value for the given key in the config object and writes it to the config.yaml file.
- * @param {string} key Key to set
- * @param {any} value Value to set
+ * THIS FUNCTION IS DEPRECATED AND ONLY EXISTS FOR BACKWARDS COMPATIBILITY. DON'T USE IT.
+ * @param {any} _key Unused
+ * @param {any} _value Unused
+ * @deprecated Configs are read-only. Use environment variables instead.
  */
-export function setConfigValue(key, value) {
-    // Reset cache so that the next getConfig call will read the updated config file
-    CACHED_CONFIG = null;
-    const config = getConfig();
-    _.set(config, key, value);
-    writeFileAtomicSync('./config.yaml', yaml.stringify(config));
+export function setConfigValue(_key, _value) {
+    console.trace(color.yellow('setConfigValue is deprecated and should not be used.'));
 }
 
 /**
@@ -149,6 +177,7 @@ export function getHexString(length) {
  */
 export function formatBytes(bytes) {
     if (bytes === 0) return '0 B';
+
     const k = 1024;
     const sizes = ['B', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
@@ -163,14 +192,12 @@ export function formatBytes(bytes) {
  */
 export async function extractFileFromZipBuffer(archiveBuffer, fileExtension) {
     return await new Promise((resolve, reject) => yauzl.fromBuffer(Buffer.from(archiveBuffer), { lazyEntries: true }, (err, zipfile) => {
-        if (err) {
-            reject(err);
-        }
+        if (err) reject(err);
 
         zipfile.readEntry();
         zipfile.on('entry', (entry) => {
             if (entry.fileName.endsWith(fileExtension) && !entry.fileName.startsWith('__MACOSX')) {
-                console.log(`Extracting ${entry.fileName}`);
+                console.info(`Extracting ${entry.fileName}`);
                 zipfile.openReadStream(entry, (err, readStream) => {
                     if (err) {
                         reject(err);
@@ -218,7 +245,7 @@ export async function getImageBuffers(zipFilePath) {
                 zipfile.on('entry', (entry) => {
                     const mimeType = mime.lookup(entry.fileName);
                     if (mimeType && mimeType.startsWith('image/') && !entry.fileName.startsWith('__MACOSX')) {
-                        console.log(`Extracting ${entry.fileName}`);
+                        console.info(`Extracting ${entry.fileName}`);
                         zipfile.openReadStream(entry, (err, readStream) => {
                             if (err) {
                                 reject(err);
@@ -285,10 +312,11 @@ export function deepMerge(target, source) {
     if (isObject(target) && isObject(source)) {
         Object.keys(source).forEach(key => {
             if (isObject(source[key])) {
-                if (!(key in target))
+                if (!(key in target)) {
                     Object.assign(output, { [key]: source[key] });
-                else
+                } else {
                     output[key] = deepMerge(target[key], source[key]);
+                }
             } else {
                 Object.assign(output, { [key]: source[key] });
             }
@@ -297,21 +325,7 @@ export function deepMerge(target, source) {
     return output;
 }
 
-export const color = {
-    byNum: (mess, fgNum) => {
-        mess = mess || '';
-        fgNum = fgNum === undefined ? 31 : fgNum;
-        return '\u001b[' + fgNum + 'm' + mess + '\u001b[39m';
-    },
-    black: (mess) => color.byNum(mess, 30),
-    red: (mess) => color.byNum(mess, 31),
-    green: (mess) => color.byNum(mess, 32),
-    yellow: (mess) => color.byNum(mess, 33),
-    blue: (mess) => color.byNum(mess, 34),
-    magenta: (mess) => color.byNum(mess, 35),
-    cyan: (mess) => color.byNum(mess, 36),
-    white: (mess) => color.byNum(mess, 37),
-};
+export const color = chalk;
 
 /**
  * Gets a random UUIDv4 string.
@@ -392,7 +406,7 @@ export function generateTimestamp() {
  * @param {number?} limit Maximum number of backups to keep. If null, the limit is determined by the `backups.common.numberOfBackups` config value.
  */
 export function removeOldBackups(directory, prefix, limit = null) {
-    const MAX_BACKUPS = limit ?? Number(getConfigValue('backups.common.numberOfBackups', 50));
+    const MAX_BACKUPS = limit ?? Number(getConfigValue('backups.common.numberOfBackups', 50, 'number'));
 
     let files = fs.readdirSync(directory).filter(f => f.startsWith(prefix));
     if (files.length > MAX_BACKUPS) {
@@ -447,7 +461,7 @@ export function forwardFetchResponse(from, to) {
     let statusText = from.statusText;
 
     if (!from.ok) {
-        console.log(`Streaming request failed with status ${statusCode} ${statusText}`);
+        console.warn(`Streaming request failed with status ${statusCode} ${statusText}`);
     }
 
     // Avoid sending 401 responses as they reset the client Basic auth.
@@ -467,11 +481,12 @@ export function forwardFetchResponse(from, to) {
 
         to.socket.on('close', function () {
             if (from.body instanceof Readable) from.body.destroy(); // Close the remote stream
+
             to.end(); // End the Express response
         });
 
         from.body.on('end', function () {
-            console.log('Streaming request finished');
+            console.info('Streaming request finished');
             to.end();
         });
     } else {
@@ -516,7 +531,7 @@ export function makeHttp2Request(endpoint, method, body, headers) {
                 });
 
                 req.on('end', () => {
-                    console.log(data);
+                    console.debug(data);
                     resolve(data);
                 });
             });
@@ -693,19 +708,159 @@ export function isValidUrl(url) {
 }
 
 /**
+ * removes starting `[` or ending `]` from hostname.
+ * @param {string} hostname hostname to use
+ * @returns {string} hostname plus the modifications
+ */
+export function urlHostnameToIPv6(hostname) {
+    if (hostname.startsWith('[')) {
+        hostname = hostname.slice(1);
+    }
+    if (hostname.endsWith(']')) {
+        hostname = hostname.slice(0, -1);
+    }
+    return hostname;
+}
+
+/**
+ * Test if can resolve a dns name.
+ * @param {string} name Domain name to use
+ * @param {boolean} useIPv6 If use IPv6
+ * @param {boolean} useIPv4 If use IPv4
+ * @returns Promise<boolean> If the URL is valid
+ */
+export async function canResolve(name, useIPv6 = true, useIPv4 = true) {
+    try {
+        let v6Resolved = false;
+        let v4Resolved = false;
+
+        if (useIPv6) {
+            try {
+                await dnsPromise.resolve6(name);
+                v6Resolved = true;
+            } catch (error) {
+                v6Resolved = false;
+            }
+        }
+
+        if (useIPv4) {
+            try {
+                await dnsPromise.resolve(name);
+                v4Resolved = true;
+            } catch (error) {
+                v4Resolved = false;
+            }
+        }
+
+        return v6Resolved || v4Resolved;
+
+    } catch (error) {
+        return false;
+    }
+}
+
+/**
+ * Checks the network interfaces to determine the presence of IPv6 and IPv4 addresses.
+ *
+ * @typedef {object} IPQueryResult
+ * @property {boolean} hasIPv6Any - Whether the computer has any IPv6 address, including (`::1`).
+ * @property {boolean} hasIPv4Any - Whether the computer has any IPv4 address, including (`127.0.0.1`).
+ * @property {boolean} hasIPv6Local - Whether the computer has local IPv6 address (`::1`).
+ * @property {boolean} hasIPv4Local - Whether the computer has local IPv4 address (`127.0.0.1`).
+ * @returns {Promise<IPQueryResult>} A promise that resolves to an array containing:
+ */
+export async function getHasIP() {
+    let hasIPv6Any = false;
+    let hasIPv6Local = false;
+
+    let hasIPv4Any = false;
+    let hasIPv4Local = false;
+
+    const interfaces = os.networkInterfaces();
+
+    for (const iface of Object.values(interfaces)) {
+        if (iface === undefined) {
+            continue;
+        }
+
+        for (const info of iface) {
+            if (info.family === 'IPv6') {
+                hasIPv6Any = true;
+                if (info.address === '::1') {
+                    hasIPv6Local = true;
+                }
+            }
+
+            if (info.family === 'IPv4') {
+                hasIPv4Any = true;
+                if (info.address === '127.0.0.1') {
+                    hasIPv4Local = true;
+                }
+            }
+            if (hasIPv6Any && hasIPv4Any && hasIPv6Local && hasIPv4Local) break;
+        }
+        if (hasIPv6Any && hasIPv4Any && hasIPv6Local && hasIPv4Local) break;
+    }
+
+    return { hasIPv6Any, hasIPv4Any, hasIPv6Local, hasIPv4Local };
+}
+
+
+/**
+ * Converts various JavaScript primitives to boolean values.
+ * Handles special case for "true"/"false" strings (case-insensitive)
+ *
+ * @param {any} value - The value to convert to boolean
+ * @returns {boolean} - The boolean representation of the value
+ */
+export function toBoolean(value) {
+    // Handle string values case-insensitively
+    if (typeof value === 'string') {
+        // Trim and convert to lowercase for case-insensitive comparison
+        const trimmedLower = value.trim().toLowerCase();
+
+        // Handle explicit "true"/"false" strings
+        if (trimmedLower === 'true') return true;
+        if (trimmedLower === 'false') return false;
+    }
+
+    // Handle all other JavaScript values based on their "truthiness"
+    return Boolean(value);
+}
+
+/**
+ * converts string to boolean accepts 'true' or 'false' else it returns the string put in
+ * @param {string|null} str Input string or null
+ * @returns {boolean|string|null} boolean else original input string or null if input is
+ */
+export function stringToBool(str) {
+    if (String(str).trim().toLowerCase() === 'true') return true;
+    if (String(str).trim().toLowerCase() === 'false') return false;
+    return str;
+}
+
+/**
+ * Setup the minimum log level
+ */
+export function setupLogLevel() {
+    const logLevel = getConfigValue('logging.minLogLevel', LOG_LEVELS.DEBUG, 'number');
+
+    globalThis.console.debug = logLevel <= LOG_LEVELS.DEBUG ? console.debug : () => { };
+    globalThis.console.info = logLevel <= LOG_LEVELS.INFO ? console.info : () => { };
+    globalThis.console.warn = logLevel <= LOG_LEVELS.WARN ? console.warn : () => { };
+    globalThis.console.error = logLevel <= LOG_LEVELS.ERROR ? console.error : () => { };
+}
+
+/**
  * MemoryLimitedMap class that limits the memory usage of string values.
  */
 export class MemoryLimitedMap {
     /**
      * Creates an instance of MemoryLimitedMap.
-     * @param {number} maxMemoryInBytes - The maximum allowed memory in bytes for string values.
+     * @param {string} cacheCapacity - Maximum memory usage in human-readable format (e.g., '1 GB').
      */
-    constructor(maxMemoryInBytes) {
-        if (typeof maxMemoryInBytes !== 'number' || maxMemoryInBytes <= 0 || isNaN(maxMemoryInBytes)) {
-            console.warn('Invalid maxMemoryInBytes, using a fallback value of 1 GB.');
-            maxMemoryInBytes = 1024 * 1024 * 1024; // 1 GB
-        }
-        this.maxMemory = maxMemoryInBytes;
+    constructor(cacheCapacity) {
+        this.maxMemory = bytes.parse(cacheCapacity) ?? 0;
         this.currentMemory = 0;
         this.map = new Map();
         this.queue = [];
@@ -728,6 +883,10 @@ export class MemoryLimitedMap {
      * @param {string} value
      */
     set(key, value) {
+        if (this.maxMemory <= 0) {
+            return;
+        }
+
         if (typeof key !== 'string' || typeof value !== 'string') {
             return;
         }
@@ -869,5 +1028,46 @@ export class MemoryLimitedMap {
      */
     [Symbol.iterator]() {
         return this.map[Symbol.iterator]();
+    }
+}
+
+/**
+ * A 'safe' version of `fs.readFileSync()`. Returns the contents of a file if it exists, falling back to a default value if not.
+ * @param {string} filePath Path of the file to be read.
+ * @param {Parameters<typeof fs.readFileSync>[1]} options Options object to pass through to `fs.readFileSync()` (default: `{ encoding: 'utf-8' }`).
+ * @returns The contents at `filePath` if it exists, or `null` if not.
+ */
+export function safeReadFileSync(filePath, options = { encoding: 'utf-8' }) {
+    if (fs.existsSync(filePath)) return fs.readFileSync(filePath, options);
+    return null;
+}
+
+/**
+ * Set the title of the terminal window
+ * @param {string} title Desired title for the window
+ */
+export function setWindowTitle(title) {
+    if (process.platform === 'win32') {
+        process.title = title;
+    }
+    else {
+        process.stdout.write(`\x1b]2;${title}\x1b\x5c`);
+    }
+}
+
+/**
+ * Parses a JSON string and applies a mutation function to the parsed object.
+ * @param {string} jsonString JSON string to parse
+ * @param {function(any): void} mutation Mutation function to apply to the parsed JSON object
+ * @returns {string} Mutated JSON string
+ */
+export function mutateJsonString(jsonString, mutation) {
+    try {
+        const json = JSON.parse(jsonString);
+        mutation(json);
+        return JSON.stringify(json);
+    } catch (error) {
+        console.error('Error parsing or mutating JSON:', error);
+        return jsonString;
     }
 }

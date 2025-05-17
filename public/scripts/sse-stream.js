@@ -137,8 +137,14 @@ async function* parseStreamData(json) {
     else if (Array.isArray(json.candidates)) {
         for (let i = 0; i < json.candidates.length; i++) {
             const isNotPrimary = json.candidates?.[0]?.index > 0;
+            const hasToolCalls = json?.candidates?.[0]?.content?.parts?.some(p => p?.functionCall);
+            const hasInlineData = json?.candidates?.[0]?.content?.parts?.some(p => p?.inlineData);
             if (isNotPrimary || json.candidates.length === 0) {
                 return null;
+            }
+            if (hasToolCalls || hasInlineData) {
+                yield { data: json, chunk: '' };
+                return;
             }
             if (typeof json.candidates[0].content === 'object' && Array.isArray(json.candidates[i].content.parts)) {
                 for (let j = 0; j < json.candidates[i].content.parts.length; j++) {
@@ -212,6 +218,36 @@ async function* parseStreamData(json) {
                     const str = json.choices[0].delta.text[j];
                     const choiceClone = structuredClone(json.choices[0]);
                     choiceClone.delta.text = str;
+                    const choices = [choiceClone];
+                    yield {
+                        data: { ...json, choices },
+                        chunk: str,
+                    };
+                }
+                return;
+            }
+            else if (typeof json.choices[0].delta.reasoning_content === 'string' && json.choices[0].delta.reasoning_content.length > 0) {
+                for (let j = 0; j < json.choices[0].delta.reasoning_content.length; j++) {
+                    const str = json.choices[0].delta.reasoning_content[j];
+                    const isLastSymbol = j === json.choices[0].delta.reasoning_content.length - 1;
+                    const choiceClone = structuredClone(json.choices[0]);
+                    choiceClone.delta.reasoning_content = str;
+                    choiceClone.delta.content = isLastSymbol ? choiceClone.delta.content : '';
+                    const choices = [choiceClone];
+                    yield {
+                        data: { ...json, choices },
+                        chunk: str,
+                    };
+                }
+                return;
+            }
+            else if (typeof json.choices[0].delta.reasoning === 'string' && json.choices[0].delta.reasoning.length > 0) {
+                for (let j = 0; j < json.choices[0].delta.reasoning.length; j++) {
+                    const str = json.choices[0].delta.reasoning[j];
+                    const isLastSymbol = j === json.choices[0].delta.reasoning.length - 1;
+                    const choiceClone = structuredClone(json.choices[0]);
+                    choiceClone.delta.reasoning = str;
+                    choiceClone.delta.content = isLastSymbol ? choiceClone.delta.content : '';
                     const choices = [choiceClone];
                     yield {
                         data: { ...json, choices },
